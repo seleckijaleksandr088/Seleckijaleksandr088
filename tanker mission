@@ -1,0 +1,136 @@
+define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "lodepng.h"
+
+unsigned char* load_png(const char* filename, unsigned int* width, unsigned int* height) {
+    unsigned char* image = NULL;
+    int error = lodepng_decode32_file(&image, width, height, filename);
+    if (error != 0) {
+        printf("error %u: %s\n", error, lodepng_error_text(error));
+    }
+    return image;
+}
+
+void write_png(const char* filename, const unsigned char* image, unsigned int width, unsigned int height) {
+    unsigned char* png;
+    size_t pngsize;
+    int error = lodepng_encode32(&png, &pngsize, image, width, height);
+    if (error == 0) {
+        lodepng_save_file(png, pngsize, filename);
+    }
+    free(png);
+}
+
+void binarize_bw(const unsigned char* rgb, unsigned char* binary, int w, int h) {
+    int total = w * h;
+    int porog = 80;
+    for (int i = 0; i < total; i++) {
+        binary[i] = (rgb[i * 4] >= porog) ? 255 : 0;
+    }
+}
+
+int flood_fill_process(unsigned char* binary, int* labels, int w, int h, int start_x, int start_y, int label, unsigned char* output) {
+    int size = 0;
+    int head = 0, tail = 0;
+    int* qx = (int*)malloc(w * h * sizeof(int));
+    int* qy = (int*)malloc(w * h * sizeof(int));
+
+    if (!qx || !qy) {
+        free(qx); free(qy);
+        return 0;
+    }
+
+    qx[tail] = start_x;
+    qy[tail] = start_y;
+    tail++;
+    labels[start_y * w + start_x] = label;
+    size++;
+
+    while (head < tail) {
+        int x = qx[head];
+        int y = qy[head];
+        head++;
+
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = x + dx;
+                int ny = y + dy;
+
+                if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                    int idx = ny * w + nx;
+                    if (binary[idx] == 255 && labels[idx] == 0) {
+                        labels[idx] = label;
+                        qx[tail] = nx;
+                        qy[tail] = ny;
+                        tail++;
+                        size++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (size >= 2 && size <= 20) {
+        for (int i = 0; i < tail; i++) {
+            int idx = qy[i] * w + qx[i];
+            output[idx * 4] = 255;
+            output[idx * 4 + 1] = 0;
+            output[idx * 4 + 2] = 0;
+            output[idx * 4 + 3] = 255;
+        }
+    }
+
+    free(qx);
+    free(qy);
+    return size;
+}
+
+int main() {
+    const char* filename = "scull.png";
+    unsigned int width, height;
+    unsigned char* picture = load_png(filename, &width, &height);
+
+    if (!picture) return -1;
+
+    int w = (int)width;
+    int h = (int)height;
+    int total = w * h;
+
+    unsigned char* binary = (unsigned char*)malloc(total);
+    int* labels = (int*)calloc(total, sizeof(int));
+    unsigned char* result_img = (unsigned char*)malloc(total * 4);
+
+    if (!binary || !labels || !result_img) {
+        free(picture); free(binary); free(labels); free(result_img);
+        return -1;
+    }
+
+    memcpy(result_img, picture, total * 4);
+    binarize_bw(picture, binary, w, h);
+
+    int tankers = 0;
+    int component_id = 0;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (binary[y * w + x] == 255 && labels[y * w + x] == 0) {
+                component_id++;
+                int s = flood_fill_process(binary, labels, w, h, x, y, component_id, result_img);
+                if (s >= 2 && s <= 20) tankers++;
+            }
+        }
+    }
+
+    write_png("result.png", result_img, width, height);
+    printf("%d\n", tankers);
+
+    free(binary);
+    free(labels);
+    free(result_img);
+    free(picture);
+
+    return 0;
+}
